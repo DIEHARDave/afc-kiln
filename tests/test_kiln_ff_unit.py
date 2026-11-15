@@ -7,7 +7,7 @@ templates/AFC_FF_kiln.cfg, and an emulated 4-lane BoxTurtle whose filament
 path Zmod_Emulator/klipper/ff_unit_sim.py models. Kiln's T0-T3 (IFS_SWAP)
 must become _T0-_T3 and AFC's T0-T3 run the changes.
 
-    wsl -e bash -lc 'cd /mnt/d/Dev/3D-Printing/KILN_AFC && python3 tests/test_kiln_ff_unit.py'
+    wsl -e bash -lc 'cd /mnt/d/Dev/3D-Printing/afc-kiln && python3 tests/test_kiln_ff_unit.py'
 
 Work files in ~/kiln_afc_test (shared with test_kiln_afc.py).
 """
