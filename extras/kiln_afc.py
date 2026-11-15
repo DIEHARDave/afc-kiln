@@ -11,7 +11,12 @@
 # - printer.load_object is wrapped so a section or object named after a
 #   module in those folders (AFC, AFC_lane lane1, AFC_spool, ...) is created
 #   from there, the way Klipper's own load_object would;
-# - AFC's hardcoded unit-type lists learn the "IFS" type of afc_ifs/AFC_IFS.py.
+# - AFC's hardcoded unit-type lists learn the "IFS" type of afc_ifs/AFC_IFS.py;
+# - another AFC unit in place of the IFS (AFC/afc_unit.cfg, which
+#   afc_unit.example.cfg starts): with an [AFC_FF] section in the config,
+#   plugin.cfg's IFS unit sections are dropped and [AFC_FF]
+#   (afc_ifs/AFC_FF.py, the AD5X head sensor as AFC's toolhead sensor) is
+#   created before [AFC_extruder] needs it.
 #
 # ad5x_plugins creates [kiln_afc] while it loads plugins, which is before
 # Klipper reaches the AFC sections, so the wrapper is in place in time.
@@ -39,6 +44,8 @@ AFC_REPO = 'https://github.com/AFCProject/AFC-Klipper-Add-On.git'
 GIT_TIMEOUT = 300
 UNIT_DIR = os.path.join(PLUGIN_DIR, 'afc_ifs')
 IFS_TYPE = 'IFS'
+# Section of afc_ifs/AFC_FF.py: its presence switches to another AFC unit
+FF_SECTION = 'AFC_FF'
 
 # KILN_AFCLite (plugin "afclite") is replaced by this plugin. Both make the
 # AFC object and CHANGE_TOOL, so they can't start together; Kiln's
@@ -248,6 +255,37 @@ def _teach_unit_type():
             lst.append(IFS_TYPE)
 
 
+def drop_ifs_unit(fileconfig):
+    """Remove the IFS unit's sections (plugin.cfg's [AFC_IFS IFS], its hub,
+    and every lane whose unit is an AFC_IFS unit) from Klipper's parsed
+    config, for another AFC unit in place of the IFS. Returns their names."""
+    sections = fileconfig.sections()
+    units = [s.split(None, 1)[1] for s in sections
+             if s.startswith('AFC_IFS ') and len(s.split()) == 2]
+    if not units:
+        return []
+    drop = ['AFC_IFS %s' % (u,) for u in units]
+    hubs = set()
+    for u in units:
+        sec = 'AFC_IFS %s' % (u,)
+        hubs.add(fileconfig.get(sec, 'hub') if fileconfig.has_option(sec, 'hub') else u)
+    used_hubs = set()
+    for s in sections:
+        parts = s.split()
+        if len(parts) != 2 or s in drop:
+            continue
+        unit = (fileconfig.get(s, 'unit') if fileconfig.has_option(s, 'unit') else '')
+        if parts[0] in ('AFC_lane', 'AFC_stepper') and unit.split(':')[0] in units:
+            drop.append(s)
+        elif fileconfig.has_option(s, 'hub'):
+            used_hubs.add(fileconfig.get(s, 'hub'))
+    drop += ['AFC_hub %s' % (h,) for h in sorted(hubs - used_hubs)
+             if fileconfig.has_section('AFC_hub %s' % (h,))]
+    for s in drop:
+        fileconfig.remove_section(s)
+    return drop
+
+
 class KilnAFC:
     def __init__(self, config):
         self.printer = printer = config.get_printer()
@@ -276,9 +314,16 @@ class KilnAFC:
             logging.info("kiln_afc: reloading %d AFC modules", len(reloaded))
         _teach_unit_type()
         self._prepare_varfile(config)
+        self.dropped = drop_ifs_unit(config.fileconfig)             if config.has_section(FF_SECTION) else []
         self._orig_load_object = printer.load_object
         printer.load_object = self._load_object
         logging.info("kiln_afc: AFC modules from %s", ", ".join(self.dirs))
+        if config.has_section(FF_SECTION):
+            # [AFC_extruder extruder] (plugin.cfg) comes before the unit file's
+            # [AFC_FF] and looks AFC_FF's head sensor up when it loads
+            self._load_object(config, FF_SECTION)
+            logging.info("kiln_afc: another AFC unit in place of the IFS; "
+                         "dropped %s", ", ".join(self.dropped) or "nothing")
 
     def _retire_afclite(self, config):
         # ENABLE_PLUGIN NAME=afc with afclite still on: this start has
@@ -327,6 +372,9 @@ class KilnAFC:
         objects = self.printer.objects
         if section in objects:
             return objects[section]
+        if section in self.dropped:
+            # Klipper's section list was made before drop_ifs_unit
+            return None
         parts = section.split()
         if not parts or not self._module_file(parts[0]):
             return self._orig_load_object(config, section, *default)

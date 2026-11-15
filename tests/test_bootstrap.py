@@ -266,5 +266,52 @@ class ForgetModules(unittest.TestCase):
                 sys.modules.pop("extras.unrelated_fake", None)
 
 
+class DropIfsUnit(unittest.TestCase):
+    """Another AFC unit in place of the IFS: plugin.cfg's IFS unit sections go."""
+    CFG = """
+[AFC_extruder extruder]
+[AFC_hub IFS]
+switch_pin: virtual
+[AFC_IFS IFS]
+hub: IFS
+extruder: extruder
+[AFC_lane lane1]
+unit: IFS:1
+[AFC_lane lane5]
+unit: IFS:5
+[AFC_BoxTurtle Turtle_1]
+hub: Turtle_1
+[AFC_hub Turtle_1]
+switch_pin: PC4
+[AFC_stepper lane2]
+unit: Turtle_1:2
+[AFC_FF]
+"""
+    def parse(self, text):
+        import configparser
+        fc = configparser.RawConfigParser(strict=False)
+        fc.read_string(text)
+        return fc
+
+    def test_drops_ifs_sections_only(self):
+        fc = self.parse(self.CFG)
+        got = kiln_afc.drop_ifs_unit(fc)
+        self.assertEqual(sorted(got), ["AFC_IFS IFS", "AFC_hub IFS",
+                                       "AFC_lane lane1", "AFC_lane lane5"])
+        self.assertEqual(fc.sections(), ["AFC_extruder extruder", "AFC_BoxTurtle Turtle_1",
+                                         "AFC_hub Turtle_1", "AFC_stepper lane2", "AFC_FF"])
+
+    def test_no_ifs_unit_nothing_dropped(self):
+        fc = self.parse("[AFC_BoxTurtle Turtle_1]\nhub: Turtle_1\n[AFC_FF]\n")
+        self.assertEqual(kiln_afc.drop_ifs_unit(fc), [])
+        self.assertEqual(len(fc.sections()), 2)
+
+    def test_shared_hub_kept(self):
+        fc = self.parse("[AFC_hub H]\n[AFC_IFS IFS]\nhub: H\n[AFC_lane lane1]\nunit: IFS:1\n"
+                        "[AFC_BoxTurtle T]\nhub: H\n")
+        self.assertEqual(sorted(kiln_afc.drop_ifs_unit(fc)), ["AFC_IFS IFS", "AFC_lane lane1"])
+        self.assertTrue(fc.has_section("AFC_hub H"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -102,6 +102,30 @@ AFC again.
 Neither is needed for tracking itself: that is Moonraker's `[spoolman]`
 in moonraker.conf.
 
+## Another AFC unit instead of the IFS (experimental)
+
+AFC can also drive a unit of its own in place of the IFS: a BoxTurtle
+(AFC-Lite or AFC-Pro board), NightOwl, QuattroBox, HTLF, ViViD and so on.
+AFC then moves the filament itself; `afc_ifs/AFC_FF.py` turns the AD5X's
+analog head sensor into AFC's toolhead sensor (and switches off Kiln's
+toolhead runout sensor, AFC handles runout), and Kiln's moves cut, park,
+purge and brush at the purge box.
+
+1. Connect the unit's board over USB and flash it with Klipper firmware built
+   from Kiln's Klipper commit (kiln-os `buildroot/package/klipper/klipper.mk`).
+2. Copy `afc_unit.example.cfg` from this plugin to
+   `/home/klipper/printer_data/config/AFC/afc_unit.cfg` and add the unit at
+   its end: its `[mcu]` (`serial: /dev/serial/by-id/usb-Klipper_...`) and
+   its unit, hub and lane sections, from AFC's `templates/` and
+   `config/mcu/` in `/data/ad5x/plugins/afc/AFC-Klipper-Add-On`.
+3. `RESTART`. `plugin.cfg` includes that file; its `[AFC_FF]` section makes
+   the plugin leave out its IFS unit sections. Delete the file and `RESTART`
+   to go back to the IFS.
+4. Measure `tool_stn` and `tool_stn_unload` (head sensor to nozzle) and set
+   them under `[AFC_extruder extruder]` in that file.
+
+Tested in an emulator only (a simulated BoxTurtle), not with a real unit yet.
+
 ## Tests
 
 ```sh
@@ -109,6 +133,11 @@ python3 tests/test_kiln_afc.py --klipper ~/kiln-klipper \
     --afc ~/AFC-Klipper-Add-On --emu ~/KILN_IFSJacker/emulator \
     --python ~/klippy-test-env/bin/python
 ```
+
+`python3 tests/test_kiln_ff_unit.py` runs the plugin with another AFC unit
+(an emulated BoxTurtle, `Zmod_Emulator/klipper/ff_unit_sim.py` from the
+workspace, `--sim`) and Kiln's `ifs.py` and `adc_filament_sensor.py` from a
+kiln-os checkout (`--kiln`); see its `--help`.
 
 `python3 tests/test_bootstrap.py` checks the afclite removal and the AFC
 checkout following `AFC_COMMIT` on their own (no Klipper).
