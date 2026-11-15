@@ -1,9 +1,9 @@
-# KILN_AFC
+# afc-kiln
 
 [AFC-Klipper-Add-On](https://github.com/AFCProject/AFC-Klipper-Add-On) (the AFC Project)
 on Kiln OS, with the AD5X IFS as an AFC unit. **Testing release: running
 on one AD5X since 2026-11-08 (idle changes, two-color prints, Spoolman).
-Reports welcome in [Issues](https://github.com/DIEHARDave/KILN_AFC/issues).**
+Reports welcome in [Issues](https://github.com/DIEHARDave/afc-kiln/issues).**
 Replaces [KILN_AFCLite](https://github.com/DIEHARDave/KILN_AFCLite):
 enabling this plugin disables and deletes afclite ([below](#coming-from-afclite)).
 
@@ -23,7 +23,7 @@ Over SSH as root, with the printer idle:
 
 ```sh
 cd /data/ad5x/plugins
-su -s /bin/sh klipper -c "git clone https://github.com/DIEHARDave/KILN_AFC afc"
+su -s /bin/sh klipper -c "git clone https://github.com/DIEHARDave/afc-kiln afc"
 ```
 
 Then `ENABLE_PLUGIN NAME=afc` in the console. Klipper restarts, and on that
@@ -68,6 +68,10 @@ lane1-lane4: restart HelixScreen once (`/etc/init.d/S70helixscreen restart`)
 so it drops the old names.
 
 ## Renamed for Kiln OS 1.0
+
+This repository was `KILN_AFC` until 2026-11-15; old links and clones keep
+working (GitHub redirects them), and Moonraker switches an installed
+copy to the new address by itself at its next update check.
 
 Since v0.1.0-rc1, Kiln OS keeps names that start with `kiln_` or
 `ad5x_` for itself and refuses plugins that use them. This plugin's
