@@ -29,7 +29,7 @@ PLUGIN = os.path.dirname(HERE)
 WORK = os.path.expanduser("~/kiln_afc_test")
 LINK = "/tmp/ifs_afc"
 MOONRAKER_PORT = 7139
-# kiln_afc's afclite spool hand-over (AFC_IFS SEED_SUFFIX next to AFC.var)
+# afc_kiln's afclite spool hand-over (AFC_IFS SEED_SUFFIX next to AFC.var)
 SEED_FILE = os.path.join(WORK, "AFC", "AFC.var.afclite-spools.json")
 
 results = []
@@ -156,7 +156,7 @@ def plugin_cfg(args):
     text = open(os.path.join(PLUGIN, "plugin.cfg")).read()
     text = text.replace("/home/klipper/printer_data/config/AFC",
                         os.path.join(WORK, "AFC"))
-    text = text.replace("[kiln_afc]\n", "[kiln_afc]\nafc_path: %s\n" % args.afc)
+    text = text.replace("[afc_kiln]\n", "[afc_kiln]\nafc_path: %s\n" % args.afc)
     text = text.replace("force_assign_map: True\n",
                         "force_assign_map: True\nmoonraker_port: %d\n"
                         "moonraker_host: http://127.0.0.1\n" % MOONRAKER_PORT)
@@ -275,7 +275,7 @@ def run(args):
         def kspool(n):
             return ((api.query("spoolman_slots")["spoolman_slots"] or {})
                     .get('slots', {}).get(str(n)))
-        # main() left the seed kiln_afc writes when it replaces afclite
+        # main() left the seed afc_kiln writes when it replaces afclite
         got = wait_for(lambda: lane(api, 4).get('spool_id') == 6 and kspool(4) == 6, 20)
         check("after afclite: its lane spool (slot 4 = 6) is kept, both sides", got,
               (lane(api, 4).get('spool_id'), kspool(4)))
@@ -401,7 +401,7 @@ def main():
     extras = os.path.join(os.path.expanduser(args.klipper), "klippy", "extras")
     links = {"ifs.py": os.path.join(HERE, "kiln_files", "ifs.py"),
              "kiln_test_probe.py": os.path.join(args.emu, "klipper_test", "kiln_test_probe.py"),
-             "kiln_afc.py": os.path.join(PLUGIN, "extras", "kiln_afc.py"),
+             "afc_kiln.py": os.path.join(PLUGIN, "extras", "afc_kiln.py"),
              "spoolman_slots.py": os.path.join(HERE, "kiln_files", "spoolman_slots.py")}
     for name, target in links.items():
         path = os.path.join(extras, name)

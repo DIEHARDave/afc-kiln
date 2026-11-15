@@ -1,10 +1,10 @@
-"""kiln_afc: replacing KILN_AFCLite plugins.cfg, the plugin folder, the
+"""afc_kiln: replacing KILN_AFCLite plugins.cfg, the plugin folder, the
 Moonraker include and the spool hand-over, against fake Kiln folders;
 and the AFC checkout following AFC_COMMIT, against a local git repo.
 
     python3 tests/test_retire_afclite.py
 
-No Klipper needed (kiln_afc imports nothing of Klipper's at load).
+No Klipper needed (afc_kiln imports nothing of Klipper's at load).
 """
 import importlib.util
 import json
@@ -16,9 +16,9 @@ import unittest
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 spec = importlib.util.spec_from_file_location(
-    "kiln_afc", os.path.join(os.path.dirname(HERE), "extras", "kiln_afc.py"))
-kiln_afc = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(kiln_afc)
+    "afc_kiln", os.path.join(os.path.dirname(HERE), "extras", "afc_kiln.py"))
+afc_kiln = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(afc_kiln)
 
 
 class ConfigError(Exception):
@@ -63,7 +63,7 @@ class Config:
     def get_printer(self):
         return self.printer
     def get(self, key, default=None):
-        return self.sections.get('kiln_afc', {}).get(key, default)
+        return self.sections.get('afc_kiln', {}).get(key, default)
 
 
 def plugin(base, name):
@@ -102,7 +102,7 @@ class Retire(unittest.TestCase):
                              'moonraker_restart_file': self.restart},
             'AFC': {'VarFile': self.var},
             'save_variables': {'filename': self.vars},
-            'kiln_afc': {'afc_path': os.path.join(t, 'no-afc')},
+            'afc_kiln': {'afc_path': os.path.join(t, 'no-afc')},
         }
     def tearDown(self):
         self.tmp.cleanup()
@@ -118,7 +118,7 @@ class Retire(unittest.TestCase):
 
     def test_enabled(self):
         self.write_enabled("camera", "afclite", "afclite2", "afc")
-        self.assertTrue(kiln_afc.retire_afclite(Config(self.sections)))
+        self.assertTrue(afc_kiln.retire_afclite(Config(self.sections)))
         text = open(self.plugins).read()
         self.assertNotIn("/afclite/", text)
         for n in ("camera", "afclite2", "afc"):
@@ -131,16 +131,16 @@ class Retire(unittest.TestCase):
         self.assertFalse(os.path.exists(self.lite))
         self.assertTrue(os.path.isdir(self.other))
         self.assertTrue(os.path.exists(self.restart))
-        seed = json.load(open(self.var + kiln_afc.SEED_SUFFIX))
+        seed = json.load(open(self.var + afc_kiln.SEED_SUFFIX))
         self.assertEqual(seed, {"slots": {"1": 12, "4": 7}})
 
     def test_installed_but_off(self):
         self.write_enabled("afc")
         before = open(self.plugins).read()
-        self.assertFalse(kiln_afc.retire_afclite(Config(self.sections)))
+        self.assertFalse(afc_kiln.retire_afclite(Config(self.sections)))
         self.assertFalse(os.path.exists(self.lite))
         self.assertEqual(open(self.plugins).read(), before)
-        self.assertFalse(os.path.exists(self.var + kiln_afc.SEED_SUFFIX))
+        self.assertFalse(os.path.exists(self.var + afc_kiln.SEED_SUFFIX))
         self.assertFalse(os.path.exists(self.restart))
 
     def test_not_there(self):
@@ -148,7 +148,7 @@ class Retire(unittest.TestCase):
         shutil.rmtree(self.lite)
         self.write_enabled("afc")
         before = open(self.plugins).read()
-        self.assertFalse(kiln_afc.retire_afclite(Config(self.sections)))
+        self.assertFalse(afc_kiln.retire_afclite(Config(self.sections)))
         self.assertEqual(open(self.plugins).read(), before)
         self.assertTrue(os.path.isdir(self.other))
 
@@ -157,19 +157,19 @@ class Retire(unittest.TestCase):
         with open(os.path.join(self.lite, "plugin.json"), "w") as f:
             json.dump({"name": "something"}, f)
         self.write_enabled("afc")
-        self.assertFalse(kiln_afc.retire_afclite(Config(self.sections)))
+        self.assertFalse(afc_kiln.retire_afclite(Config(self.sections)))
         self.assertTrue(os.path.isdir(self.lite))
 
     def test_no_kiln(self):
         # The emulator test and plain Klipper: no ad5x_plugins, default
         # paths that don't exist
-        self.assertFalse(kiln_afc.retire_afclite(Config({})))
+        self.assertFalse(afc_kiln.retire_afclite(Config({})))
 
     def test_bootstrap_restarts(self):
         self.write_enabled("afclite", "afc")
         cfg = Config(self.sections)
         with self.assertRaises(ConfigError) as e:
-            kiln_afc.KilnAFC(cfg)
+            afc_kiln.KilnAFC(cfg)
         self.assertIn("afclite", str(e.exception))
         (cb, when), = cfg.printer.reactor.callbacks
         self.assertGreater(when, 0)
@@ -179,7 +179,7 @@ class Retire(unittest.TestCase):
         # here stops at the missing AFC checkout)
         cfg2 = Config(self.sections)
         with self.assertRaises(ConfigError) as e:
-            kiln_afc.KilnAFC(cfg2)
+            afc_kiln.KilnAFC(cfg2)
         self.assertIn("no AFC checkout", str(e.exception))
         self.assertEqual(cfg2.printer.reactor.callbacks, [])
 
@@ -208,7 +208,7 @@ class AfcCheckout(unittest.TestCase):
         self.tmp.cleanup()
     def sync(self, commit):
         open(self.commit_file, "w").write(commit + "\n")
-        return kiln_afc.sync_afc_checkout(self.dest, self.commit_file, "file://" + self.repo)
+        return afc_kiln.sync_afc_checkout(self.dest, self.commit_file, "file://" + self.repo)
     def head(self):
         return subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.dest,
                               stdout=subprocess.PIPE).stdout.decode().strip()
@@ -258,7 +258,7 @@ class ForgetModules(unittest.TestCase):
             sys.modules["extras.AFC_fake_one"] = object()
             sys.modules["extras.unrelated_fake"] = object()
             try:
-                got = kiln_afc._forget_modules([d, os.path.join(d, "missing")])
+                got = afc_kiln._forget_modules([d, os.path.join(d, "missing")])
                 self.assertEqual(got, ["AFC_fake_one"])
                 self.assertNotIn("extras.AFC_fake_one", sys.modules)
                 self.assertIn("extras.unrelated_fake", sys.modules)
@@ -295,7 +295,7 @@ unit: Turtle_1:2
 
     def test_drops_ifs_sections_only(self):
         fc = self.parse(self.CFG)
-        got = kiln_afc.drop_ifs_unit(fc)
+        got = afc_kiln.drop_ifs_unit(fc)
         self.assertEqual(sorted(got), ["AFC_IFS IFS", "AFC_hub IFS",
                                        "AFC_lane lane1", "AFC_lane lane5"])
         self.assertEqual(fc.sections(), ["AFC_extruder extruder", "AFC_BoxTurtle Turtle_1",
@@ -303,13 +303,13 @@ unit: Turtle_1:2
 
     def test_no_ifs_unit_nothing_dropped(self):
         fc = self.parse("[AFC_BoxTurtle Turtle_1]\nhub: Turtle_1\n[AFC_FF]\n")
-        self.assertEqual(kiln_afc.drop_ifs_unit(fc), [])
+        self.assertEqual(afc_kiln.drop_ifs_unit(fc), [])
         self.assertEqual(len(fc.sections()), 2)
 
     def test_shared_hub_kept(self):
         fc = self.parse("[AFC_hub H]\n[AFC_IFS IFS]\nhub: H\n[AFC_lane lane1]\nunit: IFS:1\n"
                         "[AFC_BoxTurtle T]\nhub: H\n")
-        self.assertEqual(sorted(kiln_afc.drop_ifs_unit(fc)), ["AFC_IFS IFS", "AFC_lane lane1"])
+        self.assertEqual(sorted(afc_kiln.drop_ifs_unit(fc)), ["AFC_IFS IFS", "AFC_lane lane1"])
         self.assertTrue(fc.has_section("AFC_hub H"))
 
 

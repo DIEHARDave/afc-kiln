@@ -18,7 +18,7 @@
 #   (afc_ifs/AFC_FF.py, the AD5X head sensor as AFC's toolhead sensor) is
 #   created before [AFC_extruder] needs it.
 #
-# ad5x_plugins creates [kiln_afc] while it loads plugins, which is before
+# ad5x_plugins creates [afc_kiln] while it loads plugins, which is before
 # Klipper reaches the AFC sections, so the wrapper is in place in time.
 #
 # Copyright (C) 2026 DIEHARDave. GPLv3, like Klipper and AFC.
@@ -185,7 +185,7 @@ def retire_afclite(config):
                 _write_atomic(var + SEED_SUFFIX,
                               json.dumps({'slots': _afclite_spools(config)}))
             except OSError as e:
-                logging.warning("kiln_afc: can't write %s: %s",
+                logging.warning("afc_kiln: can't write %s: %s",
                                 var + SEED_SUFFIX, e)
     if enabled:
         _write_atomic(opts['plugins_file'], "\n".join(keep) + "\n")
@@ -213,8 +213,8 @@ def retire_afclite(config):
             with open(opts['moonraker_restart_file'], 'w') as f:
                 f.write("plugins\n")
         except OSError as e:
-            logging.info("kiln_afc: %s: %s", opts['moonraker_restart_file'], e)
-    logging.info("kiln_afc: retired afclite (was %s%s)",
+            logging.info("afc_kiln: %s: %s", opts['moonraker_restart_file'], e)
+    logging.info("afc_kiln: retired afclite (was %s%s)",
                  "enabled" if enabled else "disabled",
                  ", deleted %s" % pdir if installed else "")
     return enabled
@@ -299,30 +299,30 @@ class KilnAFC:
                 note = sync_afc_checkout(self.afc_dir)
             except (OSError, RuntimeError) as e:
                 raise config.error(
-                    "kiln_afc: can't bring AFC to the commit in AFC_COMMIT: "
+                    "afc_kiln: can't bring AFC to the commit in AFC_COMMIT: "
                     "%s. Check the network, then restart Klipper "
                     "(/etc/init.d/S61klipper restart)." % (e,))
             if note:
-                logging.info("kiln_afc: %s", note)
+                logging.info("afc_kiln: %s", note)
         if not os.path.isfile(os.path.join(self.afc_dir, 'extras', 'AFC.py')):
             raise config.error(
-                "kiln_afc: no AFC checkout at %s. Run install.sh in the "
+                "afc_kiln: no AFC checkout at %s. Run install.sh in the "
                 "plugin folder (it clones AFC-Klipper-Add-On)." % self.afc_dir)
         self.dirs = _add_paths(self.afc_dir)
         reloaded = _forget_modules(self.dirs)
         if reloaded:
-            logging.info("kiln_afc: reloading %d AFC modules", len(reloaded))
+            logging.info("afc_kiln: reloading %d AFC modules", len(reloaded))
         _teach_unit_type()
         self._prepare_varfile(config)
         self.dropped = drop_ifs_unit(config.fileconfig)             if config.has_section(FF_SECTION) else []
         self._orig_load_object = printer.load_object
         printer.load_object = self._load_object
-        logging.info("kiln_afc: AFC modules from %s", ", ".join(self.dirs))
+        logging.info("afc_kiln: AFC modules from %s", ", ".join(self.dirs))
         if config.has_section(FF_SECTION):
             # [AFC_extruder extruder] (plugin.cfg) comes before the unit file's
             # [AFC_FF] and looks AFC_FF's head sensor up when it loads
             self._load_object(config, FF_SECTION)
-            logging.info("kiln_afc: another AFC unit in place of the IFS; "
+            logging.info("afc_kiln: another AFC unit in place of the IFS; "
                          "dropped %s", ", ".join(self.dropped) or "nothing")
 
     def _retire_afclite(self, config):
@@ -332,7 +332,7 @@ class KilnAFC:
             was_on = retire_afclite(config)
         except OSError as e:
             raise config.error(
-                "kiln_afc: can't remove afclite (KILN_AFCLite): %s. Run "
+                "afc_kiln: can't remove afclite (KILN_AFCLite): %s. Run "
                 "DISABLE_PLUGIN NAME=afclite, then REMOVE_PLUGIN NAME=afclite"
                 % (e,))
         if not was_on:
@@ -360,7 +360,7 @@ class KilnAFC:
                 with open(unit, 'w') as f:
                     f.write('{}')
         except OSError as e:
-            logging.warning("kiln_afc: can't prepare %s: %s", var, e)
+            logging.warning("afc_kiln: can't prepare %s: %s", var, e)
 
     def _module_file(self, name):
         for d in self.dirs:
@@ -392,5 +392,26 @@ class KilnAFC:
         return {'afc_path': self.afc_dir}
 
 
+def adopt_legacy_section(config, old):
+    """Options from a section of the name before the rename (Kiln OS 1.0
+    keeps kiln_ names for itself), so a user's own [kiln_afc] in local.cfg
+    still applies instead of stopping Klipper with an unknown section."""
+    if not config.has_section(old):
+        return
+    fc = config.fileconfig
+    new = config.get_name()
+    legacy = config.getsection(old)
+    for opt in fc.options(old):
+        fc.set(new, opt, fc.get(old, opt))
+        legacy.get(opt)  # marks the old option as used
+    msg = "[%s] is now [%s]: rename the section in your config" % (old, new)
+    logging.warning(msg)
+    try:
+        config.get_printer().lookup_object('configfile').runtime_warning(msg)
+    except Exception:
+        pass
+
+
 def load_config(config):
+    adopt_legacy_section(config, 'kiln_afc')
     return KilnAFC(config)

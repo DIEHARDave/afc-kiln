@@ -10,7 +10,7 @@ since 2026-11-08: PREP, idle unload and load work; no print yet.
 
 ## How it works today
 
-- `extras/kiln_afc.py` (bootstrap): adds `afc_ifs/` and AFC's `extras/`
+- `extras/afc_kiln.py` (bootstrap): adds `afc_ifs/` and AFC's `extras/`
   to `extras.__path__`, wraps `printer.load_object` so AFC's sections and
   helper objects load from there, and adds `IFS` to AFC's unit-type lists.
 - `afc_ifs/AFC_IFS.py` (unit): the IFS has its own motors and firmware;
@@ -77,7 +77,7 @@ since 2026-11-08: PREP, idle unload and load work; no print yet.
 
 1. **Plugin loader:** let a plugin declare module folders that go on
    `extras.__path__` and that `load_object` searches (and accept
-   AFC-style module names such as `AFC_lane`). Then `kiln_afc.py` is not
+   AFC-style module names such as `AFC_lane`). Then `afc_kiln.py` is not
    needed.
 2. **One lane_data writer:** `kiln_lanes` (Moonraker) and AFC both write
    `lane_data` `lane1`-`lane4`. With AFC_IFS syncing materials both write

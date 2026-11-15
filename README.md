@@ -35,7 +35,7 @@ home printer" error instead).
 
 ## Updates
 
-Mainsail or Fluidd, Software Updates, entry **kiln-afc** (release tags
+Mainsail or Fluidd, Software Updates, entry **afc-kiln** (release tags
 only), then `RESTART` with the printer idle. At that start the plugin
 loads its new code, moves its AFC checkout to the release's `AFC_COMMIT`
 (fetching it if needed) and reloads AFC. Kiln's Moonraker can't restart
@@ -44,7 +44,7 @@ Klipper itself, so the update doesn't.
 By hand: `git pull` in `/data/ad5x/plugins/afc` as the klipper user, then
 `RESTART`.
 
-An `afc_path:` in `[kiln_afc]` points the plugin at an AFC checkout of your
+An `afc_path:` in `[afc_kiln]` points the plugin at an AFC checkout of your
 own; that one is left as it is.
 
 Don't run AFC's `install-afc.sh` on Kiln: Klipper is read-only there, and
@@ -66,6 +66,18 @@ Kiln's spoolman slot, else the one afclite kept (`kiln_afclite_spool_*` in
 save_variables; those variables stay). Lane names change from E0-E3 to
 lane1-lane4: restart HelixScreen once (`/etc/init.d/S70helixscreen restart`)
 so it drops the old names.
+
+## Renamed for Kiln OS 1.0
+
+Since v0.1.0-rc1, Kiln OS keeps names that start with `kiln_` or
+`ad5x_` for itself and refuses plugins that use them. This plugin's
+Klipper section and status object are now `afc_kiln` (was `kiln_afc`),
+and its Software Updates entry is `afc-kiln` (was `kiln-afc`).
+
+A `[kiln_afc]` section of your own in `local.cfg` still works: its
+options are used for `[afc_kiln]`, with a warning in Fluidd/Mainsail to
+rename it. Macros or dashboards that read `printer.kiln_afc` need
+`printer.afc_kiln`.
 
 ## Options
 

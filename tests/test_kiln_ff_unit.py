@@ -100,7 +100,7 @@ def build_klippy(args):
         os.symlink(target, os.path.join(extras, name))
     if args.source == "plugin":
         # KILN_AFC's bootstrap finds AFC (afc_path) and afc_ifs/ (AFC_IFS, AFC_FF)
-        link("kiln_afc.py", os.path.join(tk.PLUGIN, "extras", "kiln_afc.py"))
+        link("afc_kiln.py", os.path.join(tk.PLUGIN, "extras", "afc_kiln.py"))
     else:
         afc = os.path.join(args.afc_root, "extras")
         for f in sorted(os.listdir(afc)):
@@ -126,7 +126,7 @@ def build_config(args):
     # The cut also tells the model the strand got shorter
     cut = CUT_SIM
     if args.source == "plugin":
-        # What KILN_AFC ships: plugin.cfg (IFS sections, [kiln_afc] bootstrap,
+        # What KILN_AFC ships: plugin.cfg (IFS sections, [afc_kiln] bootstrap,
         # the AFC/afc_unit.cfg include) + afc_unit.example.cfg with the unit
         afc_cfg = tk.plugin_cfg(args)
         unit_file = (open(os.path.join(tk.PLUGIN, "afc_unit.example.cfg")).read()
