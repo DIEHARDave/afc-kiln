@@ -7,9 +7,9 @@ templates/AFC_FF_kiln.cfg, and an emulated 4-lane BoxTurtle whose filament
 path Zmod_Emulator/klipper/ff_unit_sim.py models. Kiln's T0-T3 (IFS_SWAP)
 must become _T0-_T3 and AFC's T0-T3 run the changes.
 
-    wsl -e bash -lc 'cd /mnt/d/Dev/3D-Printing/afc-kiln && python3 tests/test_kiln_ff_unit.py'
+    wsl -e bash -lc 'cd /mnt/d/Dev/3D-Printing/afc-kiln && python3 tests/emu_kiln_ff_unit.py'
 
-Work files in ~/kiln_afc_test (shared with test_kiln_afc.py).
+Work files in ~/kiln_afc_test (shared with emu_kiln_afc.py).
 """
 import argparse
 import os
@@ -22,8 +22,8 @@ import time
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.dont_write_bytecode = True
 sys.path.insert(0, HERE)
-import test_kiln_afc as tk  # noqa: E402
-from test_kiln_afc import WORK, check, results, wait_for, Api, start_moonraker  # noqa: E402
+import emu_kiln_afc as tk  # noqa: E402
+from emu_kiln_afc import WORK, check, results, wait_for, Api, start_moonraker  # noqa: E402
 
 DEV = os.path.dirname(os.path.dirname(HERE))
 LANES = ["lane1", "lane2", "lane3", "lane4"]
@@ -361,7 +361,7 @@ def main():
     args = ap.parse_args()
     for a in ("klipper", "afc_root", "kiln", "emu", "sim", "python"):
         setattr(args, a, os.path.expanduser(getattr(args, a)))
-    args.afc = args.afc_root        # test_kiln_afc.plugin_cfg's afc_path
+    args.afc = args.afc_root        # emu_kiln_afc.plugin_cfg's afc_path
 
     shutil.rmtree(WORK, ignore_errors=True)
     os.makedirs(os.path.join(WORK, "gcodes"))

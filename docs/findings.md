@@ -4,7 +4,7 @@ What it took to run the full AFC-Klipper-Add-On (pinned at
 `AFC_COMMIT`, AFC's DEV branch since 2026-11-08) on Kiln OS with the Flashforge IFS as an AFC unit, and what
 could move upstream so the Kiln-specific part shrinks to configuration.
 
-Status: emulator-tested (`tests/test_kiln_afc.py`, 22 checks against
+Status: emulator-tested (`tests/emu_kiln_afc.py`, 22 checks against
 Kiln's real `ifs.py` and a simulated IFS). On an AD5X (Kiln, AFC 5ea84ea)
 since 2026-11-08: PREP, idle unload and load work; no print yet.
 

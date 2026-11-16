@@ -32,20 +32,26 @@ repository, about 16 MB) is a git submodule at the tested commit, the one
 in `AFC_COMMIT`.
 
 Then `ENABLE_PLUGIN NAME=afc` in the console. Klipper restarts. If AFC
-isn't there yet (cloned without `--recurse-submodules`, or with
-`INSTALL_PLUGIN`), the plugin fetches the submodule at that first start,
-so it takes a little longer. A tool load
+isn't there yet (cloned without `--recurse-submodules`), the plugin
+fetches the submodule at that first start, so it takes a little longer;
+`UPDATE_PLUGIN NAME=afc` fetches it too. A tool load
 or unload homes the printer first when it isn't homed (AFC's `auto_home`;
 set `auto_home: False` under `[AFC]` in local.cfg to get AFC's "Please
 home printer" error instead).
 
 ## Updates
 
+Best: `UPDATE_PLUGIN NAME=afc` in the console (or Update under Settings >
+Plugins on the touch screen). Kiln pulls the plugin, brings the AFC
+submodule to the release's commit and restarts Klipper, so no network is
+needed at that start.
+
 Mainsail or Fluidd, Software Updates, entry **afc-kiln** (release tags
-only), then `RESTART` with the printer idle. At that start the plugin
-loads its new code, moves its AFC checkout to the release's `AFC_COMMIT`
-(fetching it if needed) and reloads AFC. Kiln's Moonraker can't restart
-Klipper itself, so the update doesn't.
+only), works too, but Moonraker's update manager doesn't update git
+submodules: run `RESTART` afterwards with the printer idle. At that start
+the plugin loads its new code, moves its AFC checkout to the release's
+`AFC_COMMIT` (fetching it, so the printer needs the network then) and
+reloads AFC.
 
 By hand: `git pull` in `/data/ad5x/plugins/afc` as the klipper user, then
 `RESTART`.
@@ -155,12 +161,12 @@ Tested in an emulator only (a simulated BoxTurtle), not with a real unit yet.
 ## Tests
 
 ```sh
-python3 tests/test_kiln_afc.py --klipper ~/kiln-klipper \
+python3 tests/emu_kiln_afc.py --klipper ~/kiln-klipper \
     --afc ~/AFC-Klipper-Add-On --emu ~/KILN_IFSJacker/emulator \
     --python ~/klippy-test-env/bin/python
 ```
 
-`python3 tests/test_kiln_ff_unit.py` runs the plugin with another AFC unit
+`python3 tests/emu_kiln_ff_unit.py` runs the plugin with another AFC unit
 (an emulated BoxTurtle, `Zmod_Emulator/klipper/ff_unit_sim.py` from the
 workspace, `--sim`) and Kiln's `ifs.py` and `adc_filament_sensor.py` from a
 kiln-os checkout (`--kiln`); see its `--help`.

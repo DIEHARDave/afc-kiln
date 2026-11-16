@@ -6,7 +6,7 @@ the plugin's bootstrap and AFC_IFS unit, the real AFC-Klipper-Add-On, a
 fake IFS on a pty (KILN_IFSJacker's fake_ifs.py) and a Moonraker stub, and
 drives AFC's commands through kiln_test_probe.py.
 
-    python3 tests/test_kiln_afc.py --klipper ~/kiln-klipper \\
+    python3 tests/emu_kiln_afc.py --klipper ~/kiln-klipper \\
         --afc /mnt/d/Dev/3D-Printing/AFC-Klipper-Add-On \\
         --emu /mnt/d/Dev/3D-Printing/KILN_IFSJacker/emulator \\
         --python ~/klippy-test-env/bin/python
