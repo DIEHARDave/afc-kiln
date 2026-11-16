@@ -1,0 +1,3 @@
+[submodule "AFC-Klipper-Add-On"]
+	path = AFC-Klipper-Add-On
+	url = https://github.com/AFCProject/AFC-Klipper-Add-On.git

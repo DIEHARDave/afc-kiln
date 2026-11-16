@@ -18,6 +18,12 @@
 #   (afc_ifs/AFC_FF.py, the AD5X head sensor as AFC's toolhead sensor) is
 #   created before [AFC_extruder] needs it.
 #
+# Since plugin API 1.7 Kiln loads both folders itself (plugin.json
+# module_dirs; AFC is a git submodule at the tested commit). The bridge
+# stays for an afc_path of your own and for a first start where the
+# submodule isn't fetched yet (this module fetches it, then Kiln's module
+# list is made already). Both import the same extras.<name> modules.
+#
 # ad5x_plugins creates [afc_kiln] while it loads plugins, which is before
 # Klipper reaches the AFC sections, so the wrapper is in place in time.
 #
@@ -86,10 +92,20 @@ def sync_afc_checkout(afc_dir, commit_file=AFC_COMMIT_FILE, repo=AFC_REPO):
         want = f.read().strip().lower()
     if not re.match(r'^[0-9a-f]{7,40}$', want):
         raise RuntimeError("%s holds no commit" % commit_file)
-    if not os.path.isdir(os.path.join(afc_dir, '.git')):
-        rc, out = _git(['clone', '--quiet', repo, afc_dir])
+    if not os.path.exists(os.path.join(afc_dir, '.git')):
+        # AFC is a git submodule of this plugin: fetch it the git way when
+        # the plugin was cloned without --recurse-submodules (a .git file
+        # then points into the plugin's .git/modules), else clone it here
+        parent = os.path.dirname(os.path.abspath(afc_dir))
+        rc = 1
+        if os.path.isfile(os.path.join(parent, '.gitmodules')):
+            rc, out = _git(['submodule', 'update', '--init', '--quiet', '--',
+                            os.path.basename(afc_dir)], cwd=parent)
         if rc:
-            raise RuntimeError("git clone %s failed: %s" % (repo, out[-300:]))
+            rc, out = _git(['clone', '--quiet', repo, afc_dir])
+            if rc:
+                raise RuntimeError("git clone %s failed: %s"
+                                   % (repo, out[-300:]))
         before = None
     else:
         # Older installs cloned AFC from ArmoredTurtle/; it lives at

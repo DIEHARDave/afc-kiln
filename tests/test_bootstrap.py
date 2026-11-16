@@ -247,6 +247,61 @@ class AfcCheckout(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.sync("not a commit")
 
+    def test_submodule_fetched(self):
+        # The plugin carries AFC as a submodule; cloned without
+        # --recurse-submodules (Kiln's INSTALL_PLUGIN, Moonraker updates)
+        # the folder is empty and the sync fetches it the git way
+        env = {"GIT_CONFIG_COUNT": "1",
+               "GIT_CONFIG_KEY_0": "protocol.file.allow",
+               "GIT_CONFIG_VALUE_0": "always"}
+        old = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        try:
+            t = self.tmp.name
+            up = os.path.join(t, "plugin-upstream")
+            os.makedirs(up)
+            git("init", "-q", cwd=up)
+            git("submodule", "add", "-q", "file://" + self.repo,
+                "AFC-Klipper-Add-On", cwd=up)
+            git("commit", "-qm", "plugin", cwd=up)
+            git("clone", "-q", up, os.path.dirname(self.dest), cwd=t)
+            self.assertEqual(os.listdir(self.dest), [])
+            self.assertIn("new", self.sync(self.c1))
+            self.assertEqual(self.head(), self.c1)
+            # A .git file into the plugin's .git/modules: a real submodule
+            self.assertTrue(os.path.isfile(os.path.join(self.dest, ".git")))
+            st = subprocess.run(["git", "status", "--porcelain"],
+                                cwd=os.path.dirname(self.dest),
+                                stdout=subprocess.PIPE).stdout.decode()
+            self.assertEqual(st, "")
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+
+class PluginPin(unittest.TestCase):
+    """AFC_COMMIT and the submodule's commit in the plugin repo agree, and
+    plugin.json lists both module folders (Kiln plugin API 1.7)."""
+    ROOT = os.path.dirname(HERE)
+    def test_afc_commit_is_the_submodule_commit(self):
+        out = subprocess.run(["git", "ls-files", "-s", "AFC-Klipper-Add-On"],
+                             cwd=self.ROOT, stdout=subprocess.PIPE
+                             ).stdout.decode().split()
+        if not out:
+            self.skipTest("not a git checkout of the plugin")
+        self.assertEqual(out[0], "160000")
+        with open(os.path.join(self.ROOT, "AFC_COMMIT")) as f:
+            self.assertEqual(out[1], f.read().strip())
+    def test_module_dirs(self):
+        with open(os.path.join(self.ROOT, "plugin.json")) as f:
+            meta = json.load(f)
+        self.assertEqual(meta["module_dirs"],
+                         ["afc_ifs", "AFC-Klipper-Add-On/extras"])
+        self.assertEqual(meta["requires_os"], "1.7")
+
 
 class ForgetModules(unittest.TestCase):
     """RESTART reloads AFC: its cached modules are dropped (_forget_modules)."""

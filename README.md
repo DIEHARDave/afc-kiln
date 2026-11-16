@@ -23,12 +23,18 @@ Over SSH as root, with the printer idle:
 
 ```sh
 cd /data/ad5x/plugins
-su -s /bin/sh klipper -c "git clone https://github.com/DIEHARDave/afc-kiln afc"
+su -s /bin/sh klipper -c "git clone --recurse-submodules https://github.com/DIEHARDave/afc-kiln afc"
 ```
 
-Then `ENABLE_PLUGIN NAME=afc` in the console. Klipper restarts, and on that
-first start the plugin clones AFC (the AFC Project's repository, about 16 MB)
-at the commit in `AFC_COMMIT`, so it takes a little longer. A tool load
+Needs Kiln OS with plugin API 1.7 (`"requires_os": "1.7"`): Kiln loads
+AFC's modules from the plugin's `module_dirs`. AFC (the AFC Project's
+repository, about 16 MB) is a git submodule at the tested commit, the one
+in `AFC_COMMIT`.
+
+Then `ENABLE_PLUGIN NAME=afc` in the console. Klipper restarts. If AFC
+isn't there yet (cloned without `--recurse-submodules`, or with
+`INSTALL_PLUGIN`), the plugin fetches the submodule at that first start,
+so it takes a little longer. A tool load
 or unload homes the printer first when it isn't homed (AFC's `auto_home`;
 set `auto_home: False` under `[AFC]` in local.cfg to get AFC's "Please
 home printer" error instead).
