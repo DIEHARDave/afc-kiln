@@ -106,6 +106,8 @@ read `printer.kiln_afc` need `printer.afc_kiln`.
 | Option | Default | |
 |---|---|---|
 | `use_swap` | True | Mid-print changes as one `IFS_SWAP` |
+| `tail_runout` | True | When the slot of the lane in the toolhead runs empty in a print, keep printing until the strand's end passes the toolhead sensor, then run AFC's runout: infinite spool to the lane's runout lane (one `IFS_SWAP`, no cut or retract of the tail, Kiln's tool map follows), else AFC's runout pause. The IFS can't pull back a tail that has left its slot, as on Zmod. False: change at once, from the slot sensor |
+| `auto_runout` | True | On a runout with no ready runout lane, change to a loaded lane with the same filament, chosen from Kiln's auto-refill backups (its `MATCH=` setting). Kiln's own auto-refill swap is skipped while this is on (see [Runout and endless spool](#runout-and-endless-spool)) |
 | `print_eject` | True | Eject (`LANE_UNLOAD`) a lane that is not in the toolhead during a print. AFC refuses ejects while printing; the unit runs Kiln's eject beside the print, so the print does not wait for it (plain `IFS_EJECT` holds the print until it ends). Serial-mode IFS only; on MCU mode (IFS Jacker) AFC's refusal stays. A tool still mapped to the ejected lane pauses the print when it comes up |
 | `afc_heats` | False | Let AFC pre-heat before loads (Kiln heats anyway) |
 | `sync_materials` | True | Sync lane material/color with `ifs_materials` |
@@ -117,6 +119,15 @@ read `printer.kiln_afc` need `printer.afc_kiln`.
 | `firmware` | auto | `auto`, `kiln` or `zmod` (the unit also runs on Zmod) |
 | `head_sensor` | `adc_filament_sensor toolhead` | Toolhead sensor object |
 | `load_cmd`, `unload_cmd`, `swap_cmd`, `eject_cmd` | `IFS_LOAD SLOT={slot}`, ... | Commands per move |
+
+## Runout and endless spool
+
+AFC and Kiln both have an endless-spool feature; with this plugin AFC does the change and Kiln's stays out of it.
+
+- **When:** the IFS can't pull back a strand whose end has left its slot (the same holds on Zmod), so when the lane in the toolhead runs empty, the print goes on until the strand's end passes the toolhead sensor. Then one `IFS_SWAP` loads the next lane: no cut, no retract of the old strand (`tail_runout`).
+- **Which lane:** a runout lane set on the lane (`SET_RUNOUT LANE=lane1 RUNOUT=lane3`, or the AFC panel) wins when that lane is loaded. Otherwise, with `auto_runout` (on by default), any loaded lane with the same filament: the backups Kiln lists for the slot, matched by Kiln's setting `IFS_AUTO_REFILL MATCH=exact|similar|any`. No setup per print. With neither, the print pauses for a reload.
+- **Kiln's auto-refill:** while `auto_runout` is on, Kiln's own refill swap is skipped (it would swap as soon as the slot reads empty, and the tail can't be pulled back then). Its `IFS_AUTO_REFILL ENABLE=` switch doesn't matter to AFC; only `MATCH=` is used. Set `auto_runout: False` in `[AFC_IFS IFS]` to use only AFC runout lanes; Kiln's refill then runs as on a printer without AFC, and both may act on the same runout, so keep `IFS_AUTO_REFILL ENABLE=0` then.
+- After the change, the empty lane's tools move to the new lane, in AFC and in Kiln's tool map.
 
 ## Spoolman
 

@@ -29,6 +29,8 @@ PLUGIN = os.path.dirname(HERE)
 WORK = os.path.expanduser("~/kiln_afc_test")
 LINK = "/tmp/ifs_afc"
 MOONRAKER_PORT = 7139
+# Lines `remove <slot>` / `insert <slot>` for the fake IFS (emu_fake_ifs.py)
+IFS_CTL = os.path.join(WORK, "ifs_ctl")
 # afc_kiln's afclite spool hand-over (AFC_IFS SEED_SUFFIX next to AFC.var)
 SEED_FILE = os.path.join(WORK, "AFC", "AFC.var.afclite-spools.json")
 
@@ -148,9 +150,11 @@ PROBE_OBJECTS = ", ".join(["ifs", "ifs_materials", "AFC", "AFC_IFS IFS", "print_
 TEST_CFG = """
 [filament_switch_sensor toolhead]
 switch_pin: gpio20
-pause_on_runout: False
+pause_on_runout: True
 
 [spoolman_slots]
+
+[emu_head_sensor]
 """
 
 def plugin_cfg(args):
@@ -222,8 +226,9 @@ def afc(api):
 
 def run(args):
     emu = subprocess.Popen(
-        [sys.executable, "-u", os.path.join(args.emu, "fake_ifs.py"),
-         "--link", LINK, "--speed", "40", "--log", os.path.join(WORK, "ifs_cmds.log")],
+        [sys.executable, "-u", os.path.join(HERE, "emu_fake_ifs.py"), "--emu", args.emu,
+         "--ctl", IFS_CTL, "--link", LINK, "--speed", "40",
+         "--log", os.path.join(WORK, "ifs_cmds.log")],
         cwd=args.emu, stdout=open(os.path.join(WORK, "fake_ifs.log"), "w"),
         stderr=subprocess.STDOUT)
     for i in range(50):
@@ -428,6 +433,103 @@ def run(args):
                         in ("complete", "error", "cancelled"), 240, step=.5)
         state = api.query("print_stats")["print_stats"]
         check("eject print completes", done and state["state"] == "complete", state)
+
+        # Runout with a backup lane: lane2's slot runs empty in a print. The IFS
+        # can't pull back a tail that left its slot, so the change waits for
+        # the strand's end at the toolhead sensor, then swaps to lane4 once,
+        # with no eject of the empty slot
+        api.gcode("SET_RUNOUT LANE=lane2 RUNOUT=lane4\nTEST_HEAD_SENSOR PRESENT=1")
+        lines = ["G90", "T1"]
+        for i in range(160):
+            lines += ["TEST_SLEEP S=0.25", "G1 X%d Y30 F6000" % (20 + i % 50)]
+        open(os.path.join(WORK, "gcodes", "runout.gcode"), "w").write(
+            "".join(line + chr(10) for line in lines))
+        ok, err, out = api.gcode("SDCARD_PRINT_FILE FILENAME=runout.gcode")
+        check("runout print: lane2 in the toolhead",
+              ok and wait_for(lambda: afc(api).get('current_load') == 'lane2'
+                              and api.query("print_stats")["print_stats"]["state"]
+                              == 'printing', 30),
+              err or (afc(api).get('current_load'), ifs(api).get('channel')))
+        mark = os.path.getsize(afc_log)
+        open(IFS_CTL, "w").write("remove 2\n")
+        waiting = wait_for(lambda: "waiting for the toolhead sensor"
+                           in open(afc_log).read()[mark:], 20)
+        time.sleep(2)
+        state = api.query("print_stats")["print_stats"]["state"]
+        check("runout print: slot 2 empty, the print goes on (strand still in the head)",
+              waiting and state == 'printing' and ifs(api).get('channel') == 2
+              and afc(api).get('current_load') == 'lane2',
+              (waiting, state, ifs(api).get('channel'), afc(api).get('current_load')))
+        api.gcode("TEST_HEAD_SENSOR PRESENT=0")
+        swapping = wait_for(lambda: ifs(api).get('operation') == 'swap', 30, step=.1)
+        api.gcode("TEST_HEAD_SENSOR PRESENT=1")
+        changed = wait_for(lambda: afc(api).get('current_load') == 'lane4'
+                           and api.query("print_stats")["print_stats"]["state"]
+                           == 'printing', 60)
+        check("runout print: the strand's end at the head changes to lane4 and resumes",
+              swapping and changed,
+              (swapping, afc(api).get('current_load'), ifs(api).get('channel'),
+               api.query("print_stats")["print_stats"]["state"]))
+        cmds = [l.split("AFC_IFS: ", 1)[1].strip() for l in
+                open(afc_log).read()[mark:].splitlines() if "AFC_IFS: IFS_" in l]
+        check("runout print: one IFS_SWAP, no eject of the empty slot",
+              cmds == ["IFS_SWAP CHANNEL=4"], cmds)
+        check("runout print: T1 moved to lane4 (AFC and Kiln's tool map), lane2 empty",
+              "T1" in (lane(api, 4).get('map') or [])
+              and str((ifs(api).get('tool_map') or {}).get('1')) == '4'
+              and lane(api, 2).get('status') == 'None',
+              (lane(api, 4).get('map'), ifs(api).get('tool_map'), lane(api, 2).get('status')))
+        done = wait_for(lambda: api.query("print_stats")["print_stats"]["state"]
+                        in ("complete", "error", "cancelled"), 240, step=.5)
+        state = api.query("print_stats")["print_stats"]
+        check("runout print completes", done and state["state"] == "complete", state)
+
+        # auto_runout: no runout lane set, the backup is the loaded slot with the
+        # same filament (Kiln's refill_backups); Kiln's own refill stays out
+        api.gcode("SET_RUNOUT LANE=lane4 RUNOUT=NONE\nSET_RUNOUT LANE=lane2 RUNOUT=NONE")
+        open(IFS_CTL, "w").write("insert 2\n")
+        back = wait_for(lambda: lane(api, 2).get('status') == 'Loaded', 30)
+        api.gcode("IFS_SET_MATERIAL SLOT=2 TYPE=PLA COLOR=123456\n"
+                  "IFS_SET_MATERIAL SLOT=4 TYPE=PLA COLOR=123456\n"
+                  "IFS_AUTO_REFILL ENABLE=1 MATCH=exact")
+        backups = wait_for(lambda: 2 in ((ifs(api).get('refill_backups') or {}).get('4') or []), 10)
+        check("auto runout: lane2 back and Kiln lists slot 2 as slot 4's backup",
+              back and backups, (lane(api, 2).get('status'), ifs(api).get('refill_backups')))
+        lines = ["G90"]
+        for i in range(160):
+            lines += ["TEST_SLEEP S=0.25", "G1 X%d Y40 F6000" % (20 + i % 50)]
+        open(os.path.join(WORK, "gcodes", "auto.gcode"), "w").write(
+            "".join(line + chr(10) for line in lines))
+        ok, err, out = api.gcode("SDCARD_PRINT_FILE FILENAME=auto.gcode")
+        wait_for(lambda: api.query("print_stats")["print_stats"]["state"] == 'printing', 20)
+        mark = os.path.getsize(afc_log)
+        open(IFS_CTL, "w").write("remove 4\n")
+        waiting = wait_for(lambda: "waiting for the toolhead sensor"
+                           in open(afc_log).read()[mark:], 20)
+        time.sleep(3)
+        check("auto runout: slot 4 empty, the print goes on, Kiln's refill did not swap",
+              waiting and api.query("print_stats")["print_stats"]["state"] == 'printing'
+              and ifs(api).get('channel') == 4 and not ifs(api).get('refill'),
+              (waiting, api.query("print_stats")["print_stats"]["state"],
+               ifs(api).get('channel'), ifs(api).get('refill')))
+        api.gcode("TEST_HEAD_SENSOR PRESENT=0")
+        swapping = wait_for(lambda: ifs(api).get('operation') == 'swap', 30, step=.1)
+        api.gcode("TEST_HEAD_SENSOR PRESENT=1")
+        changed = wait_for(lambda: afc(api).get('current_load') == 'lane2'
+                           and api.query("print_stats")["print_stats"]["state"]
+                           == 'printing', 60)
+        cmds = [l.split("AFC_IFS: ", 1)[1].strip() for l in
+                open(afc_log).read()[mark:].splitlines() if "AFC_IFS: IFS_" in l]
+        check("auto runout: changes to the matching lane2 with one IFS_SWAP",
+              swapping and changed and cmds == ["IFS_SWAP CHANNEL=2"],
+              (swapping, afc(api).get('current_load'), cmds))
+        check("auto runout: lane4's runout setting left unset",
+              lane(api, 4).get('runout_lane') in (None, 'NONE', ''),
+              lane(api, 4).get('runout_lane'))
+        done = wait_for(lambda: api.query("print_stats")["print_stats"]["state"]
+                        in ("complete", "error", "cancelled"), 240, step=.5)
+        state = api.query("print_stats")["print_stats"]
+        check("auto runout print completes", done and state["state"] == "complete", state)
     finally:
         k.stop()
         emu.terminate()
@@ -448,7 +550,8 @@ def main():
     links = {"ifs.py": os.path.join(HERE, "kiln_files", "ifs.py"),
              "kiln_test_probe.py": os.path.join(args.emu, "klipper_test", "kiln_test_probe.py"),
              "afc_kiln.py": os.path.join(PLUGIN, "extras", "afc_kiln.py"),
-             "spoolman_slots.py": os.path.join(HERE, "kiln_files", "spoolman_slots.py")}
+             "spoolman_slots.py": os.path.join(HERE, "kiln_files", "spoolman_slots.py"),
+             "emu_head_sensor.py": os.path.join(HERE, "emu_head_sensor.py")}
     for name, target in links.items():
         path = os.path.join(extras, name)
         if os.path.lexists(path):
