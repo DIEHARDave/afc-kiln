@@ -74,6 +74,10 @@ MAP_MODES = ("fixed", "loaded")
 
 # print_stats states that end a print (and the tool map with it). Not
 # "paused": the print resumes with the same map.
+# Orca and PrusaSlicer write '; filament_type' and '; filament_colour' in the
+# config block at the end of the file (13-22 KB from the end in the files
+# checked); print start reads only this much of each end (PR #24).
+FILAMENT_SCAN_BYTES = 128 * 1024
 PRINT_END_STATES = ("complete", "cancelled", "error", "standby")
 
 # prime_at_print: the print position must be at least this far (mm) outside
@@ -445,6 +449,11 @@ class IFS:
         self.print_state = None
         # Startup check for a lane loaded before Kiln (see _adopt_loaded)
         self.adopt_pending = False
+        # Filaments named in the printing file, read once per print (cleared
+        # at print start and end): ((path, size, mtime_ns), (types, colours))
+        self.file_filaments_cache = None
+        # Path already warned about as unreadable in this print
+        self.file_filaments_warned = None
         # Swap heating: the target set by _heat, waited for (M109) just
         # before the first extruder move of the operation (_ensure_hot)
         self.heat_wait = None
@@ -486,7 +495,7 @@ class IFS:
         has_feeder = self.printer.lookup_object('manual_stepper ' + self.feeder_name, None) is not None
         if self.mode == 'mcu' or (self.mode == 'auto' and (has_mcu_ifs or has_feeder)):
             self.is_mcu_mode = True
-            self.version = "klipper-mcu"
+            self.version = self._mcu_ifs_version()
             self.error = None
             logging.info("ifs: running in native Klipper MCU mode (feeder: %s, selector: %s)",
                          self.feeder_name, self.selector_name)
@@ -506,6 +515,21 @@ class IFS:
             self._schedule_reconnect()
             return
         self._start_status()
+    def _mcu_ifs_version(self):
+        """The IFS firmware shown as printer.ifs.version on Klipper firmware:
+        "Klipper v0.13.0-806" from [mcu ifs] (the screen shows it where
+        Flashforge's firmware shows "3.0.7"), "Klipper" when the version is
+        unknown (feeder and selector on another MCU, PR #41)."""
+        mcu = self.printer.lookup_object('mcu ifs', None)
+        version = ""
+        if mcu is not None:
+            try:
+                version = mcu.get_status(0.).get('mcu_version') or ""
+            except Exception:
+                logging.exception("ifs: no [mcu ifs] version")
+        # v0.13.0-806-g131fffdc4 -> v0.13.0-806: the commit is in the log
+        version = version.split("-g")[0]
+        return ("Klipper " + version).strip()
     def _connect_now(self):
         """Open the link and read the IFS version (F19). Raises OSError or
         IfsError; on success the link is up and self.version is set."""
@@ -724,10 +748,10 @@ class IFS:
                 if temp < 900.0 or temp > 3100.0:
                     silk_mask |= (1 << idx)
                 silk_counts[idx] = int(temp)
-            buffer_name = "temperature_sensor ifs_spool%d_buffer" % (chan,)
-            buf_sensor = self.printer.lookup_object(buffer_name, None)
-            if buf_sensor is not None:
-                st = buf_sensor.get_status(self.reactor.monotonic())
+            stall_name = "temperature_sensor ifs_spool%d_stall" % (chan,)
+            stall_sensor = self.printer.lookup_object(stall_name, None)
+            if stall_sensor is not None:
+                st = stall_sensor.get_status(self.reactor.monotonic())
                 temp = st.get('temperature', 2048.0)
                 stall_counts[idx] = int(temp)
         self.silk = silk_counts
@@ -792,13 +816,18 @@ class IFS:
         self.mcu_inserted = 0
         self.adopt_pending = True
         # A zMod-compat print that did not end in a state we saw (power loss,
-        # shutdown, restart): no print runs now, so its map mode goes back
+        # shutdown, restart): no print runs now, so its map mode goes back.
+        # From a callback: SAVE_VARIABLE waits for its file write, and
+        # klippy:ready handlers must not pause the reactor
         if self.zmod_prev is not None and not self._in_print():
-            self._zmod_restore()
+            self.reactor.register_callback(self._ready_zmod_restore)
         self.is_ready = True
         if self.prefeed and (self.is_mcu_mode or self.fd is not None):
             self.reactor.register_callback(self._ready_prefeed)
         self.reactor.register_timer(self._watch_print, self.reactor.NOW)
+    def _ready_zmod_restore(self, eventtime):
+        if self.zmod_prev is not None and not self._in_print():
+            self._zmod_restore()
     def _watch_print(self, eventtime):
         ps = self.printer.lookup_object('print_stats', None)
         if ps is not None:
@@ -847,10 +876,13 @@ class IFS:
             self.first_swap_pending = True
             self.refill_noticed = set()
             self.refill_notice = ""
+            self.file_filaments_cache = self.file_filaments_warned = None
             if self.map_mode == "loaded":
                 self._map_loaded()
             self._warn_shared_slots()
         self.print_state = state
+        if ended:
+            self.file_filaments_cache = self.file_filaments_warned = None
         if ended and self.tool_map != list(CHANNELS):
             self.tool_map = list(CHANNELS)
             self.gcode.respond_info("IFS: print ended, tool map reset")
@@ -1183,10 +1215,10 @@ class IFS:
             if now >= end:
                 raise self._timeout_error(what, st)
             self.reactor.pause(now + self.poll_interval)
-        # Stop the feed. The IFS refuses only while a fault is latched.
-        reply = self._request("F112")
-        if "yes" not in reply:
-            raise IfsError("F112 refused: %s" % (reply,))
+        # Stop the feed. The IFS refuses only while a fault is latched
+        # ("F112 ok. error."). 3.0.7 answers "F112 ok. yes.", 3.0.6 only
+        # "F112 ok." (issue #72), so only a refusal counts as one.
+        self._command("F112")
         return self._wait_ready(self.select_timeout, what)
     def _load(self, chan, length, speed):
         if self._head_has_filament():
@@ -1280,9 +1312,7 @@ class IFS:
             now = self.reactor.monotonic()
             self.last_feed = min(length, (now - start) * speed / 60.)
             if self._head_has_filament():
-                reply = self._request("F112")
-                if "yes" not in reply:
-                    raise IfsError("F112 refused: %s" % (reply,))
+                self._command("F112")
                 self._wait_ready(self.select_timeout, what)
                 return True
             if now >= next_query:
@@ -2132,23 +2162,29 @@ class IFS:
             raise gcmd.error("IFS_MAP_TOOL: slot %d has no filament" % (slot,))
         self.tool_map[tool] = slot
         gcmd.respond_info("IFS: T%d -> slot %d" % (tool, slot))
-    def _file_filaments(self):
-        """(types, colours) per tool from the header or footer of the file
-        printing now ('; filament_type' and '; filament_colour', as Orca and
-        PrusaSlicer write them), so files made before this change work too.
-        ([], []) when there is no file or it has no such lines."""
-        vsd = self.printer.lookup_object('virtual_sdcard', None)
-        path = vsd.file_path() if vsd is not None else None
-        if not path:
-            return [], []
-        # Only the start and the end of the file are read: the lines sit in
-        # the header or the footer, and a whole-file read on the reactor
-        # thread stalled the MCU at print start (issue #22).
-        scan = 512 * 1024
+    @staticmethod
+    def _parse_file_filaments(path, size):
+        """(types, colours, used) per tool from the first and last
+        FILAMENT_SCAN_BYTES of the file, the last winning. used is the
+        '; filament used [mm]' line as text (Orca and PrusaSlicer write it
+        in the footer, comma separated)."""
+        chunk = FILAMENT_SCAN_BYTES
         found = {}
-
-        def take(text):
-            for line in text.splitlines():
+        with open(path, 'rb') as f:
+            if size <= 2 * chunk:
+                blocks = [f.read()]     # one block: no line is cut
+            else:
+                # One byte more on each side tells whether the edge line is
+                # whole (the head ends in a newline, the tail starts after
+                # one); only a cut line is dropped.
+                head = f.read(chunk + 1)
+                f.seek(size - chunk - 1)
+                tail = f.read()
+                nl = tail.find(b'\n')
+                blocks = [head[:head.rfind(b'\n') + 1],
+                          tail[nl + 1:] if nl >= 0 else b'']
+        for block in blocks:
+            for line in block.decode('utf-8', 'replace').splitlines():
                 if not line.startswith(';'):
                     continue
                 key, sep, value = line[1:].partition('=')
@@ -2156,33 +2192,64 @@ class IFS:
                 if sep and key in ('filament_type', 'filament_colour'):
                     found[key] = [v.strip().strip('"')
                                   for v in value.split(';')]
+                elif sep and key == 'filament used [mm]':
+                    found[key] = [v.strip() for v in value.split(',')]
+        return (found.get('filament_type', []),
+                found.get('filament_colour', []),
+                found.get('filament used [mm]', []))
+    @staticmethod
+    def _used_tools(used):
+        """The tools a file prints with: above 0 mm in its '; filament used
+        [mm]' line (issue #67: Orca names every filament of the project,
+        used or not). Every tool when the file has no such line, and a tool
+        the line leaves out or gives no number for."""
+        def prints(t):
+            try:
+                return float(used[t]) > 0
+            except (IndexError, ValueError):
+                return True
+        return [t for t in TOOLS if not used or prints(t)]
+    def _file_filaments(self):
+        """(types, colours, used) per tool from the header or footer of the
+        file printing now ('; filament_type', '; filament_colour' and
+        '; filament used [mm]', as Orca and PrusaSlicer write them), so files
+        made before this change work too. ([], [], []) when there is no file
+        or it has no such lines. Runs on the reactor: a whole-file read
+        stalled the MCU at print start (issue #22), so this reads at most
+        2 * FILAMENT_SCAN_BYTES, once per print (print start asks twice:
+        _map_loaded and _warn_shared_slots). An unreadable file gives one
+        console warning per print."""
+        vsd = self.printer.lookup_object('virtual_sdcard', None)
+        path = vsd.file_path() if vsd is not None else None
+        if not path:
+            return [], [], []
         try:
-            with open(path, 'rb') as f:
-                size = os.fstat(f.fileno()).st_size
-                head = f.read(scan)
-                if size > scan:
-                    head = head[:head.rfind(b'\n') + 1]  # drop a cut line
-                take(head.decode('utf-8', 'replace'))
-                if (size > scan and
-                        not ('filament_type' in found and
-                             'filament_colour' in found)):
-                    f.seek(size - scan)
-                    tail = f.read()
-                    if b'\n' in tail:
-                        tail = tail[tail.index(b'\n') + 1:]  # drop a cut line
-                    take(tail.decode('utf-8', 'replace'))
+            st = os.stat(path)
+            key = (path, st.st_size, st.st_mtime_ns)
+            cache = self.file_filaments_cache
+            if cache is not None and cache[0] == key:
+                return cache[1]
+            res = self._parse_file_filaments(path, st.st_size)
         except OSError as e:
-            logging.warning("ifs: cannot read %s for filament colours: %s",
-                            path, e)
-            return [], []
-        return found.get('filament_type', []), found.get('filament_colour', [])
+            if self.file_filaments_warned != path:
+                self.file_filaments_warned = path
+                logging.warning("ifs: cannot read %s for filament colours: %s",
+                                path, e)
+                self.gcode.respond_info(
+                    "IFS: warning: cannot read %s for filament colours: %s"
+                    % (os.path.basename(path), e))
+            return [], [], []
+        self.file_filaments_cache = (key, res)
+        return res
     def _warn_shared_slots(self):
         """Message only: two tools that map to one slot, but the file names
         different filament for them (type or colour), print with that slot's
-        filament. Shown once, when a print starts."""
-        types, colours = self._file_filaments()
+        filament. Only tools the file prints with (_used_tools). Shown once,
+        when a print starts."""
+        types, colours, used = self._file_filaments()
         if not types and not colours:
             return
+        printing = self._used_tools(used)
         def filament(t):
             mtype = types[t].strip().upper() if t < len(types) else ''
             col = colours[t].strip() if t < len(colours) else ''
@@ -2192,7 +2259,7 @@ class IFS:
                                  colours[t] if t < len(colours) else '') if x]
             return " ".join(parts) or "no filament named"
         for slot in CHANNELS:
-            tools = [t for t in TOOLS if self.tool_map[t] == slot]
+            tools = [t for t in printing if self.tool_map[t] == slot]
             for i, a in enumerate(tools):
                 for b in tools[i + 1:]:
                     if filament(a) != filament(b):
@@ -2218,11 +2285,13 @@ class IFS:
         """Loaded-slot mode: each tool uses the loaded slot that matches its
         filament in the file (material, then nearest colour). Without file
         colours, tool t uses the (t mod n)th loaded slot in slot order. Returns
-        the loaded slots; none loaded leaves the map as it is."""
+        the loaded slots; none loaded leaves the map as it is. Tools the file
+        doesn't print with are matched too: a Tn outside the file (a macro, the
+        console) still gets the nearest filament."""
         loaded = mask_channels(self.last_status.get('silk_state', 0))
         if not loaded:
             return loaded
-        types, colours = self._file_filaments()
+        types, colours, _ = self._file_filaments()
         new = []
         for t in TOOLS:
             fallback = loaded[t % len(loaded)]

@@ -45,6 +45,7 @@ def check(name, ok, detail=""):
 # Spoolman behind Moonraker's proxy; spool 9 is used up (AFC refuses it)
 SPOOLS = {n: {'id': n, 'remaining_weight': w, 'initial_weight': 1000, 'spool_weight': 190,
               'filament': {'name': 'Test %d' % n, 'material': 'PLA', 'color_hex': c,
+                           'density': 1.24, 'diameter': 1.75,
                            'vendor': {'name': 'Test'}}}
           for n, w, c in ((5, 800.0, '112233'), (6, 600.0, '445566'), (9, 0.0, '778899'))}
 
@@ -141,7 +142,7 @@ class Api:
 
 LANES = ["AFC_lane lane%d" % i for i in range(1, 5)]
 PROBE_OBJECTS = ", ".join(["ifs", "ifs_materials", "AFC", "AFC_IFS IFS", "print_stats",
-                           "spoolman_slots",
+                           "spoolman_slots", "virtual_sdcard",
                            "AFC_extruder extruder"] + LANES)
 
 TEST_CFG = """
@@ -382,6 +383,51 @@ def run(args):
         check("print: lane2 and lane3 back to Loaded",
               [lane(api, n).get('status') for n in (2, 3)] == ['Loaded', 'Loaded'],
               [lane(api, n).get('status') for n in (2, 3)])
+
+        # Eject an idle lane during a print: AFC refuses LANE_UNLOAD while
+        # printing; AFC_IFS runs Kiln's eject beside the print instead
+        lines = ["G90", "T1"]
+        for i in range(120):
+            lines += ["TEST_SLEEP S=0.25", "G1 X%d Y20 F6000" % (20 + i % 50)]
+        open(os.path.join(WORK, "gcodes", "eject.gcode"), "w").write(
+            "".join(line + chr(10) for line in lines))
+        ok, err, out = api.gcode("SDCARD_PRINT_FILE FILENAME=eject.gcode")
+        loaded = wait_for(lambda: ifs(api).get('channel') == 2
+                          and afc(api).get('current_load') == 'lane2', 120)
+        check("eject print: T1 loads lane2", ok and loaded,
+              err or (ifs(api).get('channel'), afc(api).get('current_load')))
+        mark = os.path.getsize(afc_log)
+        ok, err, out = api.gcode("LANE_UNLOAD LANE=lane2")
+        refused = "Cannot eject lane while printer is printing" in open(afc_log).read()[mark:]
+        check("eject print: the lane in the toolhead is still refused (AFC's message)",
+              lane(api, 2).get('tool_loaded') and ifs(api).get('channel') == 2 and refused,
+              (err, refused, ifs(api).get('channel')))
+        pos0 = api.query("virtual_sdcard")["virtual_sdcard"]["file_position"]
+        t0 = time.time()
+        ok, err, out = api.gcode("LANE_UNLOAD LANE=lane3")
+        t1 = time.time()
+        pos1 = api.query("virtual_sdcard")["virtual_sdcard"]["file_position"]
+        check("eject print: LANE_UNLOAD lane3 returns at once", ok and t1 - t0 < 3
+              and any("beside the print" in o for o in out),
+              err or ("%.1f s" % (t1 - t0), out))
+        busy = wait_for(lambda: ifs(api).get('operation') == 'eject', 5, step=.1)
+        empty = wait_for(lambda: 3 not in (ifs(api).get('loaded_channels') or [3]), 60, step=.2)
+        t2 = time.time()
+        pos2 = api.query("virtual_sdcard")["virtual_sdcard"]["file_position"]
+        state = api.query("print_stats")["print_stats"]["state"]
+        check("eject print: slot 3 ejected through Kiln's eject", busy and empty,
+              (busy, ifs(api).get('loaded_channels')))
+        check("eject print: the print kept going during the eject",
+              pos2 > pos1 >= pos0 and state == 'printing',
+              (pos0, pos1, pos2, state, "%.1f s" % (t2 - t1)))
+        check("eject print: lane3 empty, lane2 still in the toolhead",
+              wait_for(lambda: lane(api, 3).get('status') == 'None', 10)
+              and afc(api).get('current_load') == 'lane2',
+              (lane(api, 3).get('status'), afc(api).get('current_load')))
+        done = wait_for(lambda: api.query("print_stats")["print_stats"]["state"]
+                        in ("complete", "error", "cancelled"), 240, step=.5)
+        state = api.query("print_stats")["print_stats"]
+        check("eject print completes", done and state["state"] == "complete", state)
     finally:
         k.stop()
         emu.terminate()

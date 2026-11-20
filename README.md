@@ -106,6 +106,7 @@ read `printer.kiln_afc` need `printer.afc_kiln`.
 | Option | Default | |
 |---|---|---|
 | `use_swap` | True | Mid-print changes as one `IFS_SWAP` |
+| `print_eject` | True | Eject (`LANE_UNLOAD`) a lane that is not in the toolhead during a print. AFC refuses ejects while printing; the unit runs Kiln's eject beside the print, so the print does not wait for it (plain `IFS_EJECT` holds the print until it ends). Serial-mode IFS only; on MCU mode (IFS Jacker) AFC's refusal stays. A tool still mapped to the ejected lane pauses the print when it comes up |
 | `afc_heats` | False | Let AFC pre-heat before loads (Kiln heats anyway) |
 | `sync_materials` | True | Sync lane material/color with `ifs_materials` |
 | `sync_spools` | True | Sync lane Spoolman spools with Kiln's spoolman plugin (below) |
