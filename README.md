@@ -26,7 +26,8 @@ cd /data/ad5x/plugins
 su -s /bin/sh klipper -c "git clone --recurse-submodules https://github.com/DIEHARDave/afc-kiln afc"
 ```
 
-Needs Kiln OS with plugin API 1.7 (`"requires_os": "1.7"`): Kiln loads
+Needs Kiln OS 1.0 or later (plugin API 1.7, `"requires_os": "1.7"`;
+on Kiln v0.0.x use the `kiln-v0` branch, v0.1.10). Kiln loads
 AFC's modules from the plugin's `module_dirs`. AFC (the AFC Project's
 repository, about 16 MB) is a git submodule at the tested commit, the one
 in `AFC_COMMIT`.
