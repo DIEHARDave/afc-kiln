@@ -191,3 +191,45 @@ Linux (WSL works). Uses Kiln's `ifs.py` from `tests/kiln_files` and
 KILN_IFSJacker's `fake_ifs.py` and `kiln_test_probe.py`.
 
 GPLv3, like Klipper and AFC.
+
+
+## Experimental Kiln slicer-controlled purge (mode 2)
+
+For slicer tool changes that immediately execute `_GOTO_TRASH`, mode 2
+can avoid an unnecessary return to the print before the slicer's purge.
+The integration restores AFC's saved G-code state without changing XYZ
+for T0–T3 on the Kiln IFS backend while printing in mode 2. Other modes,
+manual CHANGE_TOOL and runout recovery retain the original AFC behavior.
+
+Kiln's native IFS after-template must also leave the head at the purge
+box. On Kiln OS 1.0.0-rc7, merge this option into the existing [ifs]
+section in local.cfg (do not duplicate the section; preserve any other
+local settings):
+
+```ini
+[ifs]
+after_gcode:
+    M106 S{(printer["gcode_macro _IFS_STATE"].fan * 255)|round|int}
+    {% if 'filament_switch_sensor toolhead' in printer %}
+    SET_FILAMENT_SENSOR SENSOR=toolhead ENABLE={printer["gcode_macro _IFS_STATE"].sensor_on}
+    {% endif %}
+    {% set mode = printer.save_variables.variables.get('use_trash_on_print', 1)|int %}
+    {% if mode == 2 and printer.print_stats.state == "printing" %}
+    RESTORE_GCODE_STATE NAME=ifs_swap MOVE=0
+    {% else %}
+    RESTORE_GCODE_STATE NAME=ifs_swap MOVE=1 MOVE_SPEED=200
+    {% endif %}
+```
+
+Use only with a slicer profile that explicitly purges and returns to the
+print with safe XY and Z positioning. Back up local.cfg and undo any
+previous manual AFC.py patches before testing. Fully restart the Klipper
+service while idle and supervise a small multicolor test. AFC.log should
+report `KilnOS mode 2: preserving purge-box position`. Check extrusion,
+Z clearance and final return; stop on unexpected movement. To roll back,
+restore the prior plugin version and local.cfg, then restart.
+
+Run the isolated regression tests with
+`python3 tests/test_mode2_restore.py`. The original direct AFC.py patch
+was confirmed by a user on an AD5X; the integration wrapper is a new
+implementation and still requires physical validation.
