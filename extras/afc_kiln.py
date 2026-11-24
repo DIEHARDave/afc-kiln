@@ -302,6 +302,64 @@ def drop_ifs_unit(fileconfig):
     return drop
 
 
+def wrap_mode2_restore(mod):
+    """Keep the AFC state restore, but leave a Kiln slicer purge at the box."""
+    cls = mod.afc
+    if getattr(cls, '_kiln_mode2_wrapped', False):
+        return
+    original_command = cls.cmd_CHANGE_TOOL
+    original_restore = cls.restore_pos
+
+    def command(self, gcmd):
+        name = gcmd.get_commandline().split(';', 1)[0].strip().split()
+        tool = name[0].upper() if name else ''
+        lane = self.lanes.get(self.tool_cmds.get(tool, ''))
+        backend = getattr(getattr(lane, 'unit_obj', None), 'backend', None)
+        sv = self.printer.lookup_object('save_variables', None)
+        ps = self.printer.lookup_object('print_stats', None)
+        mode = sv.allVariables.get('use_trash_on_print') if sv else None
+        previous = getattr(self, '_kiln_mode2_command', False)
+        self._kiln_mode2_command = (
+            tool in ('T0', 'T1', 'T2', 'T3')
+            and getattr(backend, 'name', None) == 'kiln'
+            and str(mode) == '2'
+            and ps is not None
+            and ps.get_status(self.reactor.monotonic()).get('state') == 'printing'
+            and not self.function.is_paused()
+            and not self.error_state
+        )
+        try:
+            return original_command(self, gcmd)
+        finally:
+            self._kiln_mode2_command = previous
+
+    def restore(self, move_z_first=True):
+        if not (getattr(self, '_kiln_mode2_command', False)
+                and self.in_toolchange and self.position_saved
+                and not self.error_state and not self.function.is_paused()):
+            return original_restore(self, move_z_first)
+
+        # Equivalent to AFC's pinned restore_pos(), minus the XYZ moves
+        # and the assignment of stale XYZ coordinates.
+        gm = self.gcode_move
+        self.current_state = mod.State.RESTORING_POS
+        gm.base_position = list(self.base_position)
+        gm.homing_position = list(self.homing_position)
+        gm.absolute_coord = self.absolute_coord
+        mod.set_gcode_absolute_extrude(gm, self.absolute_extrude)
+        gm.extrude_factor = self.extrude_factor
+        gm.speed = self.speed
+        gm.speed_factor = self.speed_factor
+        gm.base_position[3] += gm.last_position[3] - self.last_gcode_position[3]
+        self.current_state = mod.State.IDLE
+        self.position_saved = False
+        self.logger.info("KilnOS mode 2: preserving purge-box position")
+
+    cls.cmd_CHANGE_TOOL = command
+    cls.restore_pos = restore
+    cls._kiln_mode2_wrapped = True
+
+
 class KilnAFC:
     def __init__(self, config):
         self.printer = printer = config.get_printer()
@@ -395,6 +453,8 @@ class KilnAFC:
         if not parts or not self._module_file(parts[0]):
             return self._orig_load_object(config, section, *default)
         mod = importlib.import_module('extras.' + parts[0])
+        if section == 'AFC':
+            wrap_mode2_restore(mod)
         init = getattr(mod, 'load_config_prefix' if len(parts) > 1
                        else 'load_config', None)
         if init is None:
