@@ -282,6 +282,54 @@ class AfcCheckout(unittest.TestCase):
                     os.environ[k] = v
 
 
+class MoveToMain(unittest.TestCase):
+    """An install on branch master is moved to main (move_to_main)."""
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = self.tmp.name
+        self.origin = os.path.join(t, "origin")
+        os.makedirs(self.origin)
+        git("init", "-q", "-b", "master", cwd=self.origin)
+        open(os.path.join(self.origin, "plugin.json"), "w").write("{}\n")
+        git("add", ".", cwd=self.origin)
+        self.c1 = git("commit", "-qm", "one", cwd=self.origin)
+        git("branch", "main", cwd=self.origin)
+        self.plugin = os.path.join(t, "afc")
+        subprocess.run(["git", "clone", "-q", "--branch", "master",
+                        "file://" + self.origin, self.plugin], check=True)
+        self.restart = os.path.join(t, "restart-moonraker")
+    def tearDown(self):
+        self.tmp.cleanup()
+    def move(self):
+        return afc_kiln.move_to_main(self.plugin, self.restart)
+    def out(self, *args):
+        return subprocess.run(["git"] + list(args), cwd=self.plugin,
+                              stdout=subprocess.PIPE).stdout.decode().strip()
+
+    def test_master_moves_to_main(self):
+        self.assertIn("master -> main", self.move())
+        self.assertEqual(self.out("symbolic-ref", "--short", "HEAD"), "main")
+        self.assertEqual(self.out("rev-parse", "HEAD"), self.c1)
+        self.assertEqual(self.out("rev-parse", "--abbrev-ref", "@{u}"), "origin/main")
+        self.assertTrue(os.path.exists(self.restart))
+        self.assertEqual(self.out("status", "--porcelain"), "")
+        # Second start: nothing to do, no second Moonraker restart
+        os.remove(self.restart)
+        self.assertIsNone(self.move())
+        self.assertFalse(os.path.exists(self.restart))
+
+    def test_other_branches_left_alone(self):
+        git("checkout", "-qb", "kiln-v0", cwd=self.plugin)
+        self.assertIsNone(self.move())
+        self.assertEqual(self.out("symbolic-ref", "--short", "HEAD"), "kiln-v0")
+        git("checkout", "-q", "--detach", cwd=self.plugin)
+        self.assertIsNone(self.move())
+        self.assertFalse(os.path.exists(self.restart))
+
+    def test_no_git_folder(self):
+        self.assertIsNone(afc_kiln.move_to_main(self.tmp.name, self.restart))
+
+
 class PluginPin(unittest.TestCase):
     """AFC_COMMIT and the submodule's commit in the plugin repo agree, and
     plugin.json lists both module folders (Kiln plugin API 1.7)."""

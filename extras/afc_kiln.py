@@ -129,6 +129,59 @@ def sync_afc_checkout(afc_dir, commit_file=AFC_COMMIT_FILE, repo=AFC_REPO):
     return "AFC %s -> %s" % ((before or 'new')[:7], want[:7])
 
 
+# The plugin's default branch moved from master to main (v0.2.1). Moonraker
+# (primary_branch: main in moonraker.conf) only accepts the checkout once
+# its branch is main, so an install still on master is moved over at
+# Klipper start: same commit, the local branch renamed and set to track
+# origin/main, then Kiln restarts Moonraker so it reads the new setting.
+# GitHub's master stays frozen at v0.2.1 so late updaters still arrive here.
+OLD_BRANCH = 'master'
+NEW_BRANCH = 'main'
+
+
+def move_to_main(plugin_dir=PLUGIN_DIR,
+                 restart_file=KILN_PATHS['moonraker_restart_file']):
+    """Renames the plugin checkout's branch master to main. Returns what
+    changed, or None. Never raises: Klipper must start either way."""
+    if not os.path.isdir(os.path.dirname(restart_file)):
+        return None              # not on Kiln (a dev machine, the tests)
+    if not os.path.exists(os.path.join(plugin_dir, '.git')):
+        return None
+    rc, cur = _git(['symbolic-ref', '--short', '-q', 'HEAD'],
+                   cwd=plugin_dir, timeout=30)
+    if rc or cur != OLD_BRANCH:
+        return None              # main already, kiln-v0, detached: leave it
+    rc, _ = _git(['rev-parse', '--verify', '-q', 'refs/heads/' + NEW_BRANCH],
+                 cwd=plugin_dir, timeout=30)
+    if rc == 0:
+        logging.warning("afc_kiln: %s has both %s and %s; left on %s",
+                        plugin_dir, OLD_BRANCH, NEW_BRANCH, OLD_BRANCH)
+        return None
+    rc, out = _git(['branch', '-m', OLD_BRANCH, NEW_BRANCH],
+                   cwd=plugin_dir, timeout=30)
+    if rc:
+        logging.warning("afc_kiln: can't rename branch %s to %s: %s",
+                        OLD_BRANCH, NEW_BRANCH, out[-300:])
+        return None
+    _git(['config', 'branch.%s.remote' % NEW_BRANCH, 'origin'],
+         cwd=plugin_dir, timeout=30)
+    _git(['config', 'branch.%s.merge' % NEW_BRANCH,
+          'refs/heads/' + NEW_BRANCH], cwd=plugin_dir, timeout=30)
+    # Best effort: Moonraker fetches origin itself at its next refresh
+    rc, out = _git(['fetch', '--quiet', 'origin',
+                    '+refs/heads/%s:refs/remotes/origin/%s'
+                    % (NEW_BRANCH, NEW_BRANCH)], cwd=plugin_dir, timeout=60)
+    if rc:
+        logging.info("afc_kiln: fetch origin/%s failed (later then): %s",
+                     NEW_BRANCH, out[-300:])
+    try:
+        with open(restart_file, 'w') as f:
+            f.write('afc: branch %s -> %s\n' % (OLD_BRANCH, NEW_BRANCH))
+    except OSError as e:
+        logging.info("afc_kiln: %s: %s", restart_file, e)
+    return "plugin branch %s -> %s" % (OLD_BRANCH, NEW_BRANCH)
+
+
 def _write_atomic(path, text):
     tmp = path + '.tmp'
     with open(tmp, 'w') as f:
@@ -305,6 +358,13 @@ def drop_ifs_unit(fileconfig):
 class KilnAFC:
     def __init__(self, config):
         self.printer = printer = config.get_printer()
+        try:
+            note = move_to_main()
+        except Exception:
+            logging.exception("afc_kiln: branch move")
+            note = None
+        if note:
+            logging.info("afc_kiln: %s; Moonraker restarts", note)
         self._retire_afclite(config)
         afc_path = config.get('afc_path', None)
         self.afc_dir = afc_path or DEFAULT_AFC_DIR
